@@ -16,15 +16,19 @@ def send_log_to_telegram(message: str):
 
 
 def send_position_info_message_to_telegram(side: Side, position_size: float, enter_price: float, tp_limit: float,
-                                           dex_price: float, mexc_price: float, percentage_profit_with_leverage: float):
+                                           slippage_percentage: float, dex_price: float, mexc_price: float,
+                                           percentage_profit_with_leverage: float):
+
     message_text = f'''
 ⏰ Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}
 -----------------------------
 📈 Side: <b>{side.name}</b>
-💵 Enter price: <b>{enter_price}</b>
 💰 Position size: <b>{position_size} USDT</b>
 
 💹 Potential profit: <b>{percentage_profit_with_leverage}%</b>
+
+💵 Enter price: <b>{enter_price}</b>
+🧮 Slippage: <b>{slippage_percentage}%</b>
 
 💱 MEXC: <b>{mexc_price}</b>
 💱 DEX: <b>{dex_price}</b>

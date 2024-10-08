@@ -2,6 +2,7 @@ from modules.services.mexc_service import MexcService
 from modules.services.dex_parser_serivce import DexToolsParser
 
 from modules.utils.logger_loader import logger
+
 from modules.utils.telegram_logs import (
     send_new_tp_limit_message_to_telegram,
     send_position_info_message_to_telegram,
@@ -13,10 +14,9 @@ from data.config import (
     MEXC_NAME_COIN,
     MAX_LOOKBACK_TIME_SECONDS,
     MIN_PRICE_CHANGE_DEX,
-    MIN_PRICE_DIFFERENCE_PERCENTAGE,
     GAP_FILL,
     LEVERAGE,
-    POSITION_SIZE,
+    POSITION_SIZE_DIAPASON,
     TP_CHANGE_THRESHOLD,
     LOOP_DELAY,
     DECIMALS
@@ -28,6 +28,8 @@ from modules.utils.trading_algorithm_utils import (
     clear_deque_prices,
     calc_tp_limit,
     calc_percent_profit_with_leverage,
+    check_trade_condition,
+    calc_slippage_percentage
 )
 from modules.utils.smart_sleep import smart_sleep
 
@@ -40,9 +42,8 @@ from modules.structs.side import Side
 
 class TradingAlgorithm(Singleton):
     def __init__(self):
-        self.run_flag = False
+        self.run_flag = True
         self.close_flag = False
-        self.start_trade_working = False
 
         self.mexc_service = MexcService()
         self.dex_parser = DexToolsParser()
@@ -53,7 +54,6 @@ class TradingAlgorithm(Singleton):
         self.mexc_prices = deque()
         self.dex_prices = deque()
 
-        self.trade_side = None
         self._add_keybinds()
 
     def _add_keybinds(self):
@@ -82,14 +82,15 @@ class TradingAlgorithm(Singleton):
 
     def _stop(self):
         self._pause()
+        logger.info('Trading algorithm stopping...')
 
         self.mexc_service.driver_service.close_driver()
         self.dex_parser.driver_service.close_driver()
-
-        self.close_flag = True
         logger.info('Trading algorithm stopped')
+        self.close_flag = True
 
     def start_trade(self):
+
         while not self.close_flag:
             start_time = time.time()
 
@@ -103,34 +104,47 @@ class TradingAlgorithm(Singleton):
                 smart_sleep(start_time, LOOP_DELAY)
                 continue
 
-            if not self.check_trade_condition():
+            trade_info = check_trade_condition(self.dex_prices, self.mexc_prices,
+                                               self.dex_last_price, self.mexc_last_price)
+
+            if not trade_info:
                 smart_sleep(start_time, LOOP_DELAY)
                 continue
 
-            self.mexc_service.open_position(self.trade_side)
+            side = trade_info['side']
+            position_size = trade_info['position_size']
+
+            self.mexc_service.open_position(side, position_size)
 
             while self.mexc_service.is_active_orders():
                 logger.debug('Waiting for order to be filled.')
 
             enter_price = self.mexc_service.get_enter_price()
-            enter_price_rounded = round(enter_price, DECIMALS)
-            tp_limit = calc_tp_limit(self.trade_side, self.dex_last_price, enter_price, GAP_FILL, DECIMALS)
+            tp_limit = calc_tp_limit(side, self.dex_last_price, enter_price, GAP_FILL, DECIMALS)
+            slippage_percentage = calc_slippage_percentage(enter_price, self.mexc_last_price)
 
             percentage_profit_with_leverage = calc_percent_profit_with_leverage(
-                self.trade_side, enter_price, tp_limit, LEVERAGE)
+                side, enter_price, tp_limit, LEVERAGE)
+
             self.mexc_service.set_tp_by_limit(tp_limit)
 
+            logger.info(f'Position opened. Side: {side}, Position size: {position_size}, '
+                        f'Enter price: {enter_price}, TP limit: {tp_limit}, Slippage: {slippage_percentage}',
+                        f'DEX price: {self.dex_last_price}, MEXC price: {self.mexc_last_price}',
+                        f'Percentage profit with leverage: {percentage_profit_with_leverage}')
+
             send_position_info_message_to_telegram(
-                side=self.trade_side,
-                position_size=POSITION_SIZE,
-                enter_price=enter_price_rounded,
+                side=side,
+                position_size=position_size,
+                enter_price=enter_price,
                 tp_limit=tp_limit,
+                slippage_percentage=slippage_percentage,
                 dex_price=self.dex_last_price,
                 mexc_price=self.mexc_last_price,
                 percentage_profit_with_leverage=percentage_profit_with_leverage,
             )
 
-            self.control_position(self.trade_side, enter_price, tp_limit)
+            self.control_position(side, enter_price, tp_limit)
 
     def control_position(self, side: Side, enter_price: float, tp_limit: float):
         while self.mexc_service.is_active_orders():
@@ -140,17 +154,23 @@ class TradingAlgorithm(Singleton):
 
             if (self.dex_last_price > enter_price and side == Side.SHORT) or \
                (self.dex_last_price < enter_price and side == Side.LONG):
+
                 self.mexc_service.close_active_order_by_market()
-                logger.info('Position closed by market due to adverse price movement.')
+                logger.info(f'Position closed by market order. Side: {side}, Enter price: {enter_price}, '
+                            f'DEX price: {self.dex_last_price} MEXC price: {self.mexc_last_price}')
+
                 send_position_closed_message_to_telegram(
                     enter_price=enter_price,
                     mexc_price=self.mexc_last_price,
                     dex_price=self.dex_last_price
                 )
+
                 time.sleep(5)
                 break
 
-            new_tp_limit = calc_tp_limit(side, self.dex_last_price, enter_price, GAP_FILL, DECIMALS)
+            new_tp_limit = calc_tp_limit(side,  self.dex_last_price,
+                                         enter_price, GAP_FILL, DECIMALS)
+
             tp_diff = abs(tp_limit - new_tp_limit) / tp_limit * 100
 
             if tp_diff < TP_CHANGE_THRESHOLD:
@@ -163,7 +183,7 @@ class TradingAlgorithm(Singleton):
             logger.info('Take profit price updated.')
 
             percentage_profit_with_leverage = calc_percent_profit_with_leverage(
-                self.trade_side, enter_price, tp_limit, LEVERAGE)
+                side, enter_price, tp_limit, LEVERAGE)
 
             send_new_tp_limit_message_to_telegram(
                 tp_limit=tp_limit,
@@ -171,38 +191,6 @@ class TradingAlgorithm(Singleton):
                 mexc_price=self.mexc_last_price,
                 percentage_profit_with_leverage=percentage_profit_with_leverage,
             )
-
-    def check_trade_condition(self):
-        dex_price_change_info = get_max_price_change_percentage(self.dex_prices)
-
-        if dex_price_change_info is None:
-            return False
-
-        if MIN_PRICE_CHANGE_DEX > dex_price_change_info["max_diff_percentage"]:
-            logger.debug(f'Max price change on DEX {dex_price_change_info["max_diff_percentage"]}% is less than {MIN_PRICE_CHANGE_DEX}%, skipping.')
-            return False
-
-        mexc_price_change_percentage = get_corresponding_price_change_percentage(
-            self.mexc_prices, dex_price_change_info["timestamp"])
-
-        if mexc_price_change_percentage is None:
-            logger.debug('No corresponding price change in MEXC, skipping.')
-            return False
-
-        if abs(mexc_price_change_percentage) >= abs(dex_price_change_info["max_diff_percentage"]):
-            logger.debug(f'Price change on MEXC {mexc_price_change_percentage}% is greater than on DEX {dex_price_change_info["max_diff_percentage"]}%, skipping.')
-            return False
-
-        price_difference_percentage = (self.dex_last_price - self.mexc_last_price) / self.dex_last_price * 100
-
-        logger.debug(f'Price difference between DEX and MEXC: {price_difference_percentage:.2f}%')
-
-        if abs(price_difference_percentage) < MIN_PRICE_DIFFERENCE_PERCENTAGE:
-            logger.debug('Price movement direction does not match, skipping.')
-            return False
-
-        self.trade_side = Side.LONG if price_difference_percentage > 0 else Side.SHORT
-        return True
 
     def update_prices(self):
         now_time = time.time()
@@ -225,4 +213,4 @@ class TradingAlgorithm(Singleton):
         self.mexc_last_price = mexc_price
         self.dex_last_price = dex_price
 
-        logger.debug(f'MEXC price: {mexc_price} | DEX price: {dex_price}')
+        logger.debug(f'MEXC price: {mexc_price} |---| DEX price: {dex_price}')

@@ -25,3 +25,7 @@ class DexToolsParser(Singleton):
         except (NoSuchElementException, TimeoutException) as e:
             logger.error('Price element not found.')
             return None
+
+        except ValueError as e:
+            logger.error(f'Error parsing price: {e}')
+            return None

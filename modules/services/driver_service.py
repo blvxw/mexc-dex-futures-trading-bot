@@ -10,7 +10,6 @@ from modules.utils.driver_utils import add_cookies, save_cookies, get_chrome_opt
 
 # >>> MISC
 import time
-import screeninfo
 import os
 
 
@@ -20,7 +19,6 @@ class DriverService:
 
         self.driver = Chrome(options=get_chrome_options())
 
-        self.driver.set_window_size(screeninfo.get_monitors()[0].width, screeninfo.get_monitors()[0].height)
         self.driver.maximize_window()
         self.driver.get(startup_page)
 
