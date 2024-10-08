@@ -1,5 +1,5 @@
 from modules.services.mexc_service import MexcService
-from modules.services.dex_parser_services import DexToolsParser
+from modules.services.dex_parser_serivce import DexToolsParser
 
 from modules.utils.logger_loader import logger
 from modules.utils.telegram_logs import (

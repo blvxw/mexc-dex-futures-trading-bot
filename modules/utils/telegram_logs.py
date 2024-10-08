@@ -2,6 +2,7 @@ import requests
 from data.config import TELEGRAM_CHAT_ID
 from data.urls import TELEGRAM_API_URL
 from modules.utils.logger_loader import logger
+from modules.structs.side import Side
 import time
 
 
