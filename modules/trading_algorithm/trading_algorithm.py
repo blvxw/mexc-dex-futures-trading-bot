@@ -42,7 +42,7 @@ from modules.structs.side import Side
 
 class TradingAlgorithm(Singleton):
     def __init__(self):
-        self.run_flag = True
+        self.run_flag = False
         self.close_flag = False
 
         self.mexc_service = MexcService()
@@ -90,7 +90,6 @@ class TradingAlgorithm(Singleton):
         self.close_flag = True
 
     def start_trade(self):
-
         while not self.close_flag:
             start_time = time.time()
 
@@ -111,30 +110,35 @@ class TradingAlgorithm(Singleton):
                 smart_sleep(start_time, LOOP_DELAY)
                 continue
 
-            side = trade_info['side']
+            trade_side = trade_info['side']
             position_size = trade_info['position_size']
 
-            self.mexc_service.open_position(side, position_size)
+            self.mexc_service.open_position(trade_side, position_size)
 
             while self.mexc_service.is_active_orders():
                 logger.debug('Waiting for order to be filled.')
 
+            time.sleep(LOOP_DELAY)
             enter_price = self.mexc_service.get_enter_price()
-            tp_limit = calc_tp_limit(side, self.dex_last_price, enter_price, GAP_FILL, DECIMALS)
+            tp_limit = calc_tp_limit(trade_side, self.dex_last_price, enter_price, GAP_FILL, DECIMALS)
             slippage_percentage = calc_slippage_percentage(enter_price, self.mexc_last_price)
 
             percentage_profit_with_leverage = calc_percent_profit_with_leverage(
-                side, enter_price, tp_limit, LEVERAGE)
+                trade_side, enter_price, tp_limit, LEVERAGE)
 
             self.mexc_service.set_tp_by_limit(tp_limit)
 
-            logger.info(f'Position opened. Side: {side}, Position size: {position_size}, '
-                        f'Enter price: {enter_price}, TP limit: {tp_limit}, Slippage: {slippage_percentage}',
-                        f'DEX price: {self.dex_last_price}, MEXC price: {self.mexc_last_price}',
-                        f'Percentage profit with leverage: {percentage_profit_with_leverage}')
+            # Combine all parts into a single message string
+            message = (
+                f'Position opened. Side: {trade_side}, Position size: {position_size}, '
+                f'Enter price: {enter_price}, TP limit: {tp_limit}, Slippage: {slippage_percentage}, '
+                f'DEX price: {self.dex_last_price}, MEXC price: {self.mexc_last_price}, '
+                f'Percentage profit with leverage: {percentage_profit_with_leverage}'
+            )
+            logger.info(message)
 
             send_position_info_message_to_telegram(
-                side=side,
+                side=trade_side,
                 position_size=position_size,
                 enter_price=enter_price,
                 tp_limit=tp_limit,
@@ -144,7 +148,7 @@ class TradingAlgorithm(Singleton):
                 percentage_profit_with_leverage=percentage_profit_with_leverage,
             )
 
-            self.control_position(side, enter_price, tp_limit)
+            self.control_position(trade_side, enter_price, tp_limit)
 
     def control_position(self, side: Side, enter_price: float, tp_limit: float):
         while self.mexc_service.is_active_orders():
@@ -165,7 +169,9 @@ class TradingAlgorithm(Singleton):
                     dex_price=self.dex_last_price
                 )
 
-                time.sleep(5)
+                self.mexc_prices.clear()
+                self.dex_prices.clear()
+
                 break
 
             new_tp_limit = calc_tp_limit(side,  self.dex_last_price,

@@ -84,12 +84,12 @@ def calc_percent_profit_with_leverage(side: Side, enter_price: float, tp_price: 
         profit_percentage = ((tp_price - enter_price) / enter_price) * 100
     else:
         profit_percentage = ((enter_price - tp_price) / enter_price) * 100
-    profit_percentage_with_leverage = profit_percentage * leverage
+    profit_percentage_with_leverage = profit_percentage * leverage * GAP_FILL
     return round(profit_percentage_with_leverage, 2)
 
 
 def calc_slippage_percentage(enter_price: float, mexc_price: float) -> float:
-    return ((mexc_price - enter_price) / enter_price) * 100
+    return round((mexc_price - enter_price) / enter_price * 100, 2)
 
 
 def calc_position_size(potential_profit_percentage: float) -> int:
@@ -127,7 +127,7 @@ def check_trade_condition(dex_prices: deque, mexc_prices: deque,
         return None
 
     price_difference_percentage = (dex_last_price - mexc_last_price) / dex_last_price * 100
-    potential_profit_percentage = abs(price_difference_percentage * LEVERAGE)
+    potential_profit_percentage = abs(price_difference_percentage * LEVERAGE) * GAP_FILL
 
     logger.debug(f'Price difference between DEX and MEXC: {price_difference_percentage:.2f}%')
 

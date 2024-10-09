@@ -10,7 +10,7 @@ if __name__ == '__main__':
 
     try:
         while not trading_algorithm.close_flag:
-            time.sleep(1)
+            time.sleep(5)
     except KeyboardInterrupt:
         pass
 
